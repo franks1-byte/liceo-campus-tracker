@@ -1,6 +1,7 @@
 -- Liceo Campus Tracker: database setup (already applied to the live Supabase project).
 -- Roles: guests (not signed in) can read; students add places and edit their own;
--- admins can edit or delete anything and change roles. The first account to sign up becomes the admin.
+-- admins can edit or delete anything and change roles. Everyone registers as a student; an account
+-- becomes admin by entering the admin code (only its hash is stored, in private.settings).
 
 create schema if not exists private;
 
@@ -62,7 +63,7 @@ begin
     new.id,
     coalesce(new.raw_user_meta_data ->> 'full_name', split_part(new.email, '@', 1)),
     new.email,
-    case when exists (select 1 from public.profiles where role = 'admin') then 'student' else 'admin' end
+    'student' -- admin is granted only through claim_admin() below
   );
   return new;
 end $$;
@@ -126,3 +127,32 @@ create policy "owner or admin deletes photos" on storage.objects for delete to a
   using (bucket_id = 'photos' and ((storage.foldername(name))[1] = (select auth.uid())::text or (select private.is_admin())));
 create policy "owner or admin sees photo records" on storage.objects for select to authenticated
   using (bucket_id = 'photos' and ((storage.foldername(name))[1] = (select auth.uid())::text or (select private.is_admin())));
+
+-- admin registration: a signed-in user becomes admin by giving the correct admin code
+create extension if not exists pgcrypto with schema extensions;
+create table private.settings (key text primary key, value text not null);
+create table private.admin_attempts (user_id uuid primary key references auth.users on delete cascade, fails int not null default 0);
+alter table private.settings enable row level security;
+alter table private.admin_attempts enable row level security;
+-- set the code once, in the Supabase SQL editor (never commit the real code):
+--   insert into private.settings values ('admin_code_hash', extensions.crypt('YOUR-ADMIN-CODE', extensions.gen_salt('bf', 10)));
+
+create function public.claim_admin(code text) returns boolean
+language plpgsql security definer set search_path = '' as
+$$
+declare h text; f int;
+begin
+  if auth.uid() is null then return false; end if;
+  select fails into f from private.admin_attempts where user_id = auth.uid();
+  if coalesce(f, 0) >= 5 then return false; end if; -- locked after 5 wrong tries
+  select value into h from private.settings where key = 'admin_code_hash';
+  if h is not null and code is not null and extensions.crypt(code, h) = h then
+    update public.profiles set role = 'admin' where id = auth.uid();
+    return true;
+  end if;
+  insert into private.admin_attempts (user_id, fails) values (auth.uid(), 1)
+  on conflict (user_id) do update set fails = private.admin_attempts.fails + 1;
+  return false;
+end $$;
+revoke execute on function public.claim_admin(text) from public, anon;
+grant execute on function public.claim_admin(text) to authenticated;

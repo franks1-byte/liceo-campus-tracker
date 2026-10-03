@@ -245,6 +245,7 @@
   function openSheet(...nodes) { sheetBody.replaceChildren(...nodes.flat().filter(Boolean)); if (!sheet.open) sheet.showModal(); sheet.scrollTop = 0; }
   function closeSheet() { if (sheet.open) sheet.close(); }
   sheet.addEventListener('click', (e) => { if (e.target === sheet) closeSheet(); });
+  sheet.addEventListener('close', () => { if (!uid()) rememberGuest(); });
   const head = (title, sub) => h('div', { class: 'sheet-head' },
     h('div', {}, h('h2', {}, title), sub && h('p', {}, sub)),
     h('button', { class: 'x', type: 'button', 'aria-label': 'Close', onclick: closeSheet }, '✕'));
@@ -692,6 +693,11 @@
         h('div', { class: 'user' }, h('div', {}, p.full_name || 'Signed in', h('small', {}, isAdmin() ? 'Can edit and delete everything' : 'Can add places and edit your own')),
           h('span', { class: 'tag role' }, p.role || 'student')),
         syncBox, installTip, users,
+        !isAdmin() && h('button', { class: 'btn ghost', type: 'button', onclick: async () => {
+          const code = (prompt('Enter the admin code') || '').trim().toUpperCase(); if (!code) return;
+          const r = await sb.rpc('claim_admin', { code }); await loadProfile(); renderAll();
+          toast(r.data === true ? 'You are now an admin.' : 'That admin code is not correct.'); openAccount();
+        } }, 'I have an admin code'),
         h('button', { class: 'btn ghost', type: 'button', onclick: async () => {
           if (S.queue.length && !confirm('You have changes that are not uploaded yet. Sign out anyway? They stay on this device until you sign in again.')) return;
           await sb.auth.signOut({ scope: 'local' }); closeSheet(); toast('Signed out');
@@ -699,34 +705,75 @@
       return;
     }
 
-    let mode = 'in';
+    // not signed in: choose who you are
+    const roleCard = (title, text, onclick, cls) => h('button', { class: 'role ' + (cls || ''), type: 'button', onclick },
+      h('strong', {}, title), h('span', {}, text));
+    openSheet(head('Welcome', 'Who is using the app?'),
+      roleCard('Student', 'Log in or register to add places and photos.', () => openAuth('student')),
+      roleCard('Admin', 'Log in or register with the admin code to manage everything.', () => openAuth('admin')),
+      roleCard('Guest', 'No account. Look around, search and get directions.', () => { rememberGuest(); closeSheet(); }, 'ghost'),
+      syncBox, installTip);
+  }
+  function rememberGuest() { try { localStorage.setItem('liceo-guest', '1'); } catch (e) { /* private mode */ } }
+
+  /** Log in / register form for one role ('student' or 'admin'). */
+  function openAuth(role, startMode) {
+    let mode = startMode || 'in';
+    const admin = role === 'admin';
     const err = h('p', { class: 'err', hidden: true });
+    const fail = (msg) => { err.textContent = msg; err.hidden = false; };
     const nameField = h('label', { class: 'f', hidden: true }, 'Full name', h('input', { name: 'full_name', maxLength: 80, autocomplete: 'name' }));
-    const submit = h('button', { class: 'btn', type: 'submit' }, 'Sign in');
-    const tabs = ['in', 'up'].map((m) => h('button', { type: 'button', class: m === 'in' ? 'on' : '', onclick: () => {
-      mode = m; tabs.forEach((t, i) => t.classList.toggle('on', (i === 0) === (m === 'in')));
-      nameField.hidden = m === 'in'; submit.textContent = m === 'in' ? 'Sign in' : 'Create account'; err.hidden = true;
-    } }, m === 'in' ? 'Sign in' : 'Create account'));
+    const codeHint = h('span', {}, 'Admin code (first time only)');
+    const codeInput = h('input', { name: 'code', autocomplete: 'off', autocapitalize: 'characters', placeholder: 'LICEO-XXXX-XXXX-XXXX' });
+    const codeField = admin && h('label', { class: 'f' }, codeHint, codeInput);
+    const submit = h('button', { class: 'btn', type: 'submit' });
+    const tabs = ['in', 'up'].map((m) => h('button', { type: 'button', onclick: () => setMode(m) }, m === 'in' ? 'Log in' : 'Register'));
+    function setMode(m) {
+      mode = m; err.hidden = true;
+      tabs.forEach((t, i) => t.classList.toggle('on', (i === 0) === (m === 'in')));
+      nameField.hidden = m === 'in';
+      submit.textContent = `${m === 'in' ? 'Log in' : 'Register'} as ${role}`;
+      if (admin) { codeHint.textContent = m === 'in' ? 'Admin code (first time only)' : 'Admin code'; codeInput.required = m === 'up'; }
+    }
     const form = h('form', { onsubmit: async (ev) => {
       ev.preventDefault();
       const f = Object.fromEntries(new FormData(form));
-      if (!navigator.onLine) { err.textContent = 'You need a connection to sign in.'; err.hidden = false; return; }
+      const code = (f.code || '').trim().toUpperCase();
+      if (!navigator.onLine) return fail('You need a connection to log in or register.');
+      if (mode === 'up' && !(f.full_name || '').trim()) return fail('Enter your full name.');
       submit.disabled = true; err.hidden = true;
-      const res = mode === 'in'
-        ? await sb.auth.signInWithPassword({ email: f.email, password: f.password })
-        : await sb.auth.signUp({ email: f.email, password: f.password, options: { data: { full_name: (f.full_name || '').trim() }, emailRedirectTo: location.origin + location.pathname } });
-      submit.disabled = false;
-      if (res.error) { err.textContent = res.error.message; err.hidden = false; return; }
-      if (mode === 'up' && !res.data.session) { closeSheet(); toast('Check your email to confirm your account, then sign in.'); return; }
-      closeSheet(); toast('Welcome!');
+      try {
+        const res = mode === 'in'
+          ? await sb.auth.signInWithPassword({ email: f.email, password: f.password })
+          : await sb.auth.signUp({ email: f.email, password: f.password, options: { data: { full_name: f.full_name.trim() }, emailRedirectTo: location.origin + location.pathname } });
+        if (res.error) return fail(res.error.message);
+        if (!res.data.session) { // email confirmation is switched on in Supabase
+          closeSheet();
+          toast(admin ? 'Check your email to confirm, then log in as Admin with your admin code.' : 'Check your email to confirm your account, then log in.');
+          return;
+        }
+        S.session = res.data.session;
+        let claimed = false;
+        if (admin && code) { const r = await sb.rpc('claim_admin', { code }); claimed = r.data === true; }
+        await loadProfile(); renderAll();
+        if (admin && !isAdmin()) {
+          setMode('in'); // the account exists now, so the next try is a log in
+          return fail(code && !claimed
+            ? 'That admin code is not correct. You are logged in as a student for now; try the code again.'
+            : 'This account is not an admin yet. Enter the admin code to make it one.');
+        }
+        closeSheet(); toast(isAdmin() ? 'Welcome, admin!' : 'Welcome!');
+        flush().then(pull);
+      } finally { submit.disabled = false; }
     } },
       h('div', { class: 'seg' }, tabs), nameField,
       h('label', { class: 'f' }, 'Email', h('input', { name: 'email', type: 'email', required: true, autocomplete: 'email' })),
       h('label', { class: 'f' }, 'Password', h('input', { name: 'password', type: 'password', required: true, minLength: 6, autocomplete: 'current-password' })),
-      err, submit);
-    openSheet(head('Account', 'You are browsing as a guest'),
-      h('p', { class: 'note' }, h('b', {}, 'Guests'), ' can search and get directions. ', h('b', {}, 'Students'), ' can add places and photos. ', h('b', {}, 'Admins'), ' manage everything.'),
-      form, syncBox, installTip);
+      codeField, err, submit);
+    setMode(mode);
+    openSheet(head(admin ? 'Admin' : 'Student', admin ? 'Admins can edit or delete anything and manage people' : 'Students can add places and edit their own'),
+      form,
+      h('button', { class: 'btn ghost', type: 'button', onclick: openAccount }, '‹ Choose a different role'));
   }
 
   // ---------- navigation + events ----------
@@ -772,6 +819,8 @@
     S.session = data.session;
     await loadProfile();
     renderAll();
+    let seenGuest = false; try { seenGuest = !!localStorage.getItem('liceo-guest'); } catch (e) { /* private mode */ }
+    if (!uid() && !seenGuest) openAccount(); // first visit: ask student, admin or guest
     await flush();
     await pull();
     warmTiles();

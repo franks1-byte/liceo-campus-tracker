@@ -13,7 +13,7 @@ One public link works on phones and computers, and it can be added to the home s
 - **Camera** – take a photo of a building or room when adding it (falls back to the gallery if there is no camera).
 - **Offline mode** – the app, the campus map and the place list are saved on the device. Places added offline are queued and upload on their own when the connection comes back.
 - **Online mode** – data and photos are stored in Supabase and shared with everyone.
-- **Roles** – guests look around without an account, students add places and edit their own, admins manage everything. The first account created becomes the admin.
+- **Roles** – guests look around without an account, students add places and edit their own, admins manage everything. On first open the app asks who you are: Student (log in / register), Admin (log in / register with the admin code) or Guest.
 
 ## How it is built
 
