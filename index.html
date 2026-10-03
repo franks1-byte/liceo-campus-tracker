@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Liceo Campus Tracker</title>
+  <meta name="description" content="Find buildings and classrooms on campus with GPS. Works offline.">
+  <meta name="theme-color" content="#7a1420">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="stylesheet" href="vendor/leaflet.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-view="map">
+  <header class="top">
+    <div class="brand">
+      <img src="icons/icon-192.png" alt="" width="34" height="34">
+      <div>
+        <h1>Liceo Campus Tracker</h1>
+        <p id="subtitle">Buildings, classrooms and more</p>
+      </div>
+    </div>
+    <div class="status">
+      <button id="syncPill" class="pill" type="button" hidden></button>
+      <span id="netPill" class="pill net" role="status">Online</span>
+    </div>
+  </header>
+
+  <main>
+    <section id="mapView" class="view" aria-label="Campus map">
+      <div id="map"></div>
+      <div id="crosshair" hidden aria-hidden="true"></div>
+      <div class="map-tools">
+        <button id="locateBtn" class="fab" type="button" aria-label="Show my location" title="Show my location">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor"/><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+        <button id="campusBtn" class="fab" type="button" aria-label="Back to campus" title="Back to campus">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M3 10l9-6 9 6v10H3z M9 20v-6h6v6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+      <div id="guideBar" class="bar" hidden>
+        <div><strong id="guideName"></strong><span id="guideInfo"></span></div>
+        <button id="guideStop" class="btn small" type="button">Stop</button>
+      </div>
+      <div id="pickBar" class="bar" hidden>
+        <div><strong>Move the map</strong><span>Put the crosshair on the spot</span></div>
+        <button id="pickCancel" class="btn small ghost" type="button">Cancel</button>
+        <button id="pickOk" class="btn small" type="button">Set here</button>
+      </div>
+    </section>
+
+    <section id="placesView" class="view" aria-label="Places">
+      <div class="search">
+        <input id="q" type="search" placeholder="Search rooms, buildings, codes…" autocomplete="off" aria-label="Search places">
+        <div class="chips" role="group" aria-label="Filter">
+          <button class="chip on" data-filter="all" type="button">All</button>
+          <button class="chip" data-filter="buildings" type="button">Buildings</button>
+          <button class="chip" data-filter="rooms" type="button">Rooms</button>
+        </div>
+      </div>
+      <ul id="list" class="list"></ul>
+    </section>
+  </main>
+
+  <nav class="tabs" aria-label="Main">
+    <button data-tab="map" class="on" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>Map</button>
+    <button data-tab="places" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Places</button>
+    <button data-tab="add" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>Add</button>
+    <button data-tab="account" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 21c1-4.5 4-6 8-6s7 1.500 8 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Account</button>
+  </nav>
+
+  <dialog id="sheet" class="sheet"><div id="sheetBody"></div></dialog>
+
+  <dialog id="camera" class="camera">
+    <video id="video" playsinline autoplay muted></video>
+    <div class="cam-controls">
+      <button id="camClose" class="btn ghost light" type="button">Cancel</button>
+      <button id="camShoot" class="shutter" type="button" aria-label="Take photo"></button>
+      <label class="btn ghost light">Gallery<input id="camFile" type="file" accept="image/*" hidden></label>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="vendor/leaflet.js"></script>
+  <script src="vendor/supabase.js"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
