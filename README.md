@@ -15,6 +15,10 @@ One public link works on phones and computers, and it can be added to the home s
 - **Online mode** – data and photos are stored in Supabase and shared with everyone.
 - **Roles** – guests look around without an account, students add places and edit their own, admins manage everything. On first open the app asks who you are: Student (log in / register), Admin (log in / register with the admin code) or Guest.
 
+## Java desktop version
+
+The `java/` folder has a Java (Swing) desktop app that uses the same database: run `java/run.bat`, or open the folder in IntelliJ. See [java/README.md](java/README.md).
+
 ## How it is built
 
 | Part | What |
