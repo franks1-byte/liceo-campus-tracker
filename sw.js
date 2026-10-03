@@ -1,5 +1,5 @@
 // Service worker: makes the app open with no connection.
-const VERSION = 'v1';
+const VERSION = 'v2';
 const SHELL = 'shell-' + VERSION;
 const RUNTIME = 'runtime-' + VERSION; // map tiles + photos seen while online
 const RUNTIME_MAX = 600;

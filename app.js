@@ -96,13 +96,16 @@
     const x = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) ** 2;
     return 2 * R * Math.asin(Math.sqrt(x));
   }
-  function compass(a, b) {
+  const DIRS_SHORT = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  const DIRS = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
+  /** Compass bearing in degrees (0 = north, 90 = east) from a to b. */
+  function bearing(a, b) {
     const rad = Math.PI / 180;
     const y = Math.sin((b.lng - a.lng) * rad) * Math.cos(b.lat * rad);
     const x = Math.cos(a.lat * rad) * Math.sin(b.lat * rad) - Math.sin(a.lat * rad) * Math.cos(b.lat * rad) * Math.cos((b.lng - a.lng) * rad);
-    const deg = (Math.atan2(y, x) / rad + 360) % 360;
-    return ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'][Math.round(deg / 45) % 8];
+    return (Math.atan2(y, x) / rad + 360) % 360;
   }
+  const compass = (a, b) => DIRS[Math.round(bearing(a, b) / 45) % 8];
   const fmtDist = (m) => (m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(m < 10000 ? 1 : 0) + ' km');
   const floorLabel = (f) => (f == null ? null : f === 0 ? 'Ground floor' : 'Floor ' + f);
   const buildingOf = (room) => S.buildings.find((b) => b.id === room.building_id);
@@ -259,6 +262,7 @@
       b.description && h('p', { style: 'margin:0;overflow-wrap:anywhere' }, b.description),
       h('div', { class: 'row' },
         h('button', { class: 'btn', type: 'button', onclick: () => startGuide(b.name, b.lat, b.lng) }, 'Guide me'),
+        h('button', { class: 'btn', type: 'button', onclick: () => { S.guide = { name: b.name, lat: b.lat, lng: b.lng }; closeSheet(); renderGuide(); openAR(); } }, 'Find with camera'),
         h('button', { class: 'btn ghost', type: 'button', onclick: () => { closeSheet(); setView('map'); map.setView([b.lat, b.lng], 19); } }, 'Show on map'),
         h('a', { class: 'btn ghost', target: '_blank', rel: 'noopener', href: `https://www.google.com/maps/dir/?api=1&destination=${b.lat},${b.lng}&travelmode=walking` }, 'Google Maps')),
       h('p', { class: 'sub' }, 'Rooms'),
@@ -419,6 +423,126 @@
     catch (err) { toast('That image could not be read.'); }
   };
 
+  // ---------- AR camera view: labels float where each building really is ----------
+  const ar = $('ar'), arVideo = $('arVideo'), arLayer = $('arLayer');
+  const AR = { stream: null, heading: null, pitch: 90, raf: 0, manual: false, sensor: false, els: new Map() };
+  const AR_FOV = 58; // degrees the phone camera sees side to side when held upright
+
+  function onOrient(e) {
+    let hd = null;
+    if (typeof e.webkitCompassHeading === 'number') hd = e.webkitCompassHeading; // iPhone
+    else if (e.absolute && e.alpha != null && e.beta != null && e.gamma != null) {
+      // direction the back camera points, from the phone's rotation (W3C device orientation formula)
+      const r = Math.PI / 180, cZ = Math.cos(e.alpha * r), sZ = Math.sin(e.alpha * r), sX = Math.sin(e.beta * r), cY = Math.cos(e.gamma * r), sY = Math.sin(e.gamma * r);
+      const vx = -cZ * sY - sZ * sX * cY, vy = -sZ * sY + cZ * sX * cY;
+      hd = (Math.atan2(vx, vy) / r + 360) % 360;
+    }
+    if (hd == null || Number.isNaN(hd)) return;
+    AR.sensor = true; AR.manual = false;
+    const turn = ((hd - (AR.heading ?? hd) + 540) % 360) - 180; // smooth out compass jitter
+    AR.heading = ((AR.heading ?? hd) + turn * 0.2 + 360) % 360;
+    if (e.beta != null) AR.pitch += (e.beta - AR.pitch) * 0.2;
+  }
+
+  async function openAR() {
+    // iPhone only grants motion access when asked from inside a tap, so ask before anything else
+    const motion = window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function'
+      ? DeviceOrientationEvent.requestPermission().catch(() => 'denied') : Promise.resolve('granted');
+    if (!ar.open) ar.showModal();
+    Object.assign(AR, { heading: null, pitch: 90, manual: false, sensor: false });
+    startGps(false);
+    await motion;
+    window.addEventListener('deviceorientationabsolute', onOrient);
+    window.addEventListener('deviceorientation', onOrient);
+    setTimeout(() => { if (ar.open && !AR.sensor) { AR.manual = true; AR.heading = AR.heading ?? 0; } }, 2000);
+    cancelAnimationFrame(AR.raf); AR.raf = requestAnimationFrame(drawAR);
+    try {
+      AR.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+      if (!ar.open) { AR.stream.getTracks().forEach((t) => t.stop()); AR.stream = null; return; }
+      arVideo.srcObject = AR.stream;
+    } catch (e) { toast('Camera not available. Showing labels without the camera picture.'); }
+  }
+  function closeAR() {
+    window.removeEventListener('deviceorientationabsolute', onOrient);
+    window.removeEventListener('deviceorientation', onOrient);
+    cancelAnimationFrame(AR.raf);
+    if (AR.stream) AR.stream.getTracks().forEach((t) => t.stop());
+    AR.stream = null; arVideo.srcObject = null;
+    if (ar.open) ar.close();
+  }
+  $('arClose').onclick = closeAR;
+  ar.addEventListener('close', closeAR);
+  // no compass (laptops, some tablets): drag to look around instead
+  let dragX = null;
+  arLayer.addEventListener('pointerdown', (e) => { if (AR.manual && e.target === arLayer) dragX = e.clientX; });
+  arLayer.addEventListener('pointermove', (e) => {
+    if (dragX == null) return;
+    AR.heading = (AR.heading - (e.clientX - dragX) * (AR_FOV / arLayer.clientWidth) + 360) % 360; dragX = e.clientX;
+  });
+  window.addEventListener('pointerup', () => { dragX = null; });
+
+  function drawAR() {
+    AR.raf = requestAnimationFrame(drawAR);
+    const w = arLayer.clientWidth, ht = arLayer.clientHeight, seen = new Set();
+    let side = 0, msg, lock = null, shown = 0;
+
+    if (S.pos && AR.heading != null) {
+      // tilting the phone up pushes the horizon (and the labels standing on it) down the screen
+      const horizon = Math.min(ht - 170, Math.max(190, ht / 2 + 8 + (AR.pitch - 90) * (ht / 70)));
+      const placed = [];
+      const items = S.buildings
+        .map((b, i) => ({ b, i, d: distance(S.pos, b), off: ((bearing(S.pos, b) - AR.heading + 540) % 360) - 180 }))
+        .sort((x, y) => x.d - y.d);
+      // the building closest to the centre of the view gets the lock
+      for (const it of items) if (Math.abs(it.off) < 7 && (!lock || Math.abs(it.off) < Math.abs(lock.off))) lock = it;
+      for (const it of items) {
+        const { b, d, off } = it;
+        const target = !!S.guide && S.guide.lat === b.lat && S.guide.lng === b.lng;
+        if (Math.abs(off) > AR_FOV / 2 + 10) { if (target) side = off < 0 ? -1 : 1; continue; }
+        if (placed.length >= 8 && !target) continue;
+        const x = w / 2 + (off / (AR_FOV / 2)) * (w / 2);
+        let y = horizon;
+        while (y > 170 && placed.some((p) => Math.abs(p.x - x) < 150 && Math.abs(p.y - y) < 96)) y -= 100;
+        placed.push({ x, y });
+        let el = AR.els.get(b.id);
+        if (!el) {
+          el = h('button', { class: 'ar-mark', type: 'button', onclick: () => openBuilding(b.id) },
+            h('span', { class: 'box' }, h('span', { class: 'id' }), h('span', { class: 'n' }), h('span', { class: 'm' })),
+            h('span', { class: 'stem' }), h('span', { class: 'dot' }));
+          AR.els.set(b.id, el); arLayer.append(el);
+        }
+        const near = d < Math.max(15, S.pos.acc);
+        const meta = near ? 'YOU ARE HERE' : `${fmtDist(d)} · ${DIRS_SHORT[Math.round(bearing(S.pos, b) / 45) % 8]}`;
+        const id = `TRK.${String(it.i + 1).padStart(2, '0')}${it === lock ? ' · LOCKED' : target ? ' · TARGET' : ''}`;
+        const [idEl, n, m] = [el.querySelector('.id'), el.querySelector('.n'), el.querySelector('.m')];
+        if (idEl.textContent !== id) idEl.textContent = id;
+        if (n.textContent !== b.name) n.textContent = b.name;
+        if (m.textContent !== meta) m.textContent = meta;
+        el.classList.toggle('target', target);
+        el.classList.toggle('locked', it === lock);
+        el.style.zIndex = String(100000 - Math.round(d));
+        const scale = Math.min(1.15, Math.max(0.72, 1.15 - d / 500));
+        el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -100%) scale(${scale.toFixed(2)})`;
+        seen.add(b.id); shown++;
+      }
+    }
+    for (const [id, el] of AR.els) if (!seen.has(id)) { el.remove(); AR.els.delete(id); }
+
+    if (!S.pos) msg = 'Acquiring GPS…';
+    else if (AR.heading == null) msg = 'Calibrating compass… hold the phone upright and move it in a figure 8';
+    else if (!S.buildings.length) msg = 'No buildings to track yet. Add one first.';
+    else if (lock) { const rooms = S.rooms.filter((r) => r.building_id === lock.b.id).length; msg = `Locked: ${lock.b.name} · ${fmtDist(lock.d)} · ${rooms} room${rooms === 1 ? '' : 's'} · tap it to open`; }
+    else if (AR.manual) msg = 'No compass on this device. Drag left or right to look around.';
+    else msg = `Scanning… point the camera around you · GPS ±${Math.round(S.pos.acc)} m`;
+    const set = (id, text) => { if ($(id).textContent !== text) $(id).textContent = text; };
+    set('arMsg', msg);
+    set('arHeading', AR.heading == null ? 'HDG ---' : `${DIRS_SHORT[Math.round(AR.heading / 45) % 8]} ${String(Math.round(AR.heading) % 360).padStart(3, '0')}°`);
+    set('arCount', `TRK ${shown}/${S.buildings.length}`);
+    $('arMsg').classList.toggle('locked', !!lock);
+    $('arReticle').classList.toggle('locked', !!lock);
+    $('arLeft').hidden = side !== -1; $('arRight').hidden = side !== 1;
+  }
+
   // ---------- saving + offline queue ----------
   async function enqueue(op) {
     op.qid = await queueAdd(op);
@@ -573,7 +697,7 @@
   }
   document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => {
     const t = b.dataset.tab;
-    if (t === 'add') openForm('building'); else if (t === 'account') openAccount(); else setView(t);
+    if (t === 'add') openForm('building'); else if (t === 'account') openAccount(); else if (t === 'ar') openAR(); else setView(t);
   }));
   document.querySelectorAll('.chip').forEach((c) => c.addEventListener('click', () => {
     S.filter = c.dataset.filter;
