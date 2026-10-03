@@ -9,7 +9,7 @@ One public link works on phones and computers, and it can be added to the home s
 
 - **Map and search** – every building is a pin on the campus map; search rooms, buildings and codes.
 - **GPS** – shows where you are, sorts places by distance, and "Guide me" draws a line to the place with distance and direction.
-- **Camera view (AR)** – hold the phone up and building labels float where each building really is, HUD-tracker style, with a lock-on when you point at one.
+- **Camera view (home screen)** – hold the phone up and building labels float where each building really is, HUD-tracker style, with a lock-on when you point at one. A GTA-style minimap sits in the corner and turns as you turn; tap it for the full map.
 - **Camera** – take a photo of a building or room when adding it (falls back to the gallery if there is no camera).
 - **Offline mode** – the app, the campus map and the place list are saved on the device. Places added offline are queued and upload on their own when the connection comes back.
 - **Online mode** – data and photos are stored in Supabase and shared with everyone.

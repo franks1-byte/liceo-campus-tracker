@@ -179,11 +179,12 @@
   }
   function startGuide(name, lat, lng) {
     S.guide = { name, lat, lng };
-    closeSheet(); setView('map'); startGps(false); renderGuide(true);
+    closeSheet(); setView('ar'); renderGuide();
   }
   function renderGuide(fit) {
     const g = S.guide;
     $('guideBar').hidden = !g;
+    renderMini();
     if (guideLine) { guideLine.remove(); guideLine = null; }
     if (!g) return;
     $('guideName').textContent = g.name;
@@ -197,7 +198,7 @@
   }
 
   // ---------- rendering ----------
-  function renderAll() { renderMarkers(); renderList(); renderStatus(); }
+  function renderAll() { renderMarkers(); renderMini(); renderList(); renderStatus(); }
 
   function renderStatus() {
     const net = $('netPill');
@@ -262,7 +263,6 @@
       b.description && h('p', { style: 'margin:0;overflow-wrap:anywhere' }, b.description),
       h('div', { class: 'row' },
         h('button', { class: 'btn', type: 'button', onclick: () => startGuide(b.name, b.lat, b.lng) }, 'Guide me'),
-        h('button', { class: 'btn', type: 'button', onclick: () => { S.guide = { name: b.name, lat: b.lat, lng: b.lng }; closeSheet(); renderGuide(); openAR(); } }, 'Find with camera'),
         h('button', { class: 'btn ghost', type: 'button', onclick: () => { closeSheet(); setView('map'); map.setView([b.lat, b.lng], 19); } }, 'Show on map'),
         h('a', { class: 'btn ghost', target: '_blank', rel: 'noopener', href: `https://www.google.com/maps/dir/?api=1&destination=${b.lat},${b.lng}&travelmode=walking` }, 'Google Maps')),
       h('p', { class: 'sub' }, 'Rooms'),
@@ -424,8 +424,8 @@
   };
 
   // ---------- AR camera view: labels float where each building really is ----------
-  const ar = $('ar'), arVideo = $('arVideo'), arLayer = $('arLayer');
-  const AR = { stream: null, heading: null, pitch: 90, raf: 0, manual: false, sensor: false, els: new Map() };
+  const arVideo = $('arVideo'), arLayer = $('arLayer');
+  const AR = { on: false, resume: false, stream: null, heading: null, pitch: 90, raf: 0, manual: false, sensor: false, els: new Map() };
   const AR_FOV = 58; // degrees the phone camera sees side to side when held upright
 
   function onOrient(e) {
@@ -444,34 +444,71 @@
     if (e.beta != null) AR.pitch += (e.beta - AR.pitch) * 0.2;
   }
 
-  async function openAR() {
+  async function startAR() {
     // iPhone only grants motion access when asked from inside a tap, so ask before anything else
     const motion = window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function'
       ? DeviceOrientationEvent.requestPermission().catch(() => 'denied') : Promise.resolve('granted');
-    if (!ar.open) ar.showModal();
-    Object.assign(AR, { heading: null, pitch: 90, manual: false, sensor: false });
+    $('arStart').hidden = true;
+    if (AR.on) return;
+    Object.assign(AR, { on: true, heading: null, pitch: 90, manual: false, sensor: false });
     startGps(false);
     await motion;
+    if (!AR.on) return;
     window.addEventListener('deviceorientationabsolute', onOrient);
     window.addEventListener('deviceorientation', onOrient);
-    setTimeout(() => { if (ar.open && !AR.sensor) { AR.manual = true; AR.heading = AR.heading ?? 0; } }, 2000);
+    setTimeout(() => { if (AR.on && !AR.sensor) { AR.manual = true; AR.heading = AR.heading ?? 0; } }, 2000);
     cancelAnimationFrame(AR.raf); AR.raf = requestAnimationFrame(drawAR);
+    setTimeout(() => mini.invalidateSize(), 60);
     try {
-      AR.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
-      if (!ar.open) { AR.stream.getTracks().forEach((t) => t.stop()); AR.stream = null; return; }
-      arVideo.srcObject = AR.stream;
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+      if (!AR.on) { stream.getTracks().forEach((t) => t.stop()); return; }
+      AR.stream = stream; arVideo.srcObject = stream;
     } catch (e) { toast('Camera not available. Showing labels without the camera picture.'); }
   }
-  function closeAR() {
+  function stopAR() {
+    AR.on = false;
     window.removeEventListener('deviceorientationabsolute', onOrient);
     window.removeEventListener('deviceorientation', onOrient);
     cancelAnimationFrame(AR.raf);
     if (AR.stream) AR.stream.getTracks().forEach((t) => t.stop());
     AR.stream = null; arVideo.srcObject = null;
-    if (ar.open) ar.close();
   }
-  $('arClose').onclick = closeAR;
-  ar.addEventListener('close', closeAR);
+  $('arGo').onclick = startAR;
+  $('arStop').onclick = () => { S.guide = null; renderGuide(); };
+  $('miniBtn').onclick = () => setView('map');
+  // save battery: release the camera while the app is in the background
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && AR.on) { stopAR(); AR.resume = true; }
+    else if (!document.hidden && AR.resume) { AR.resume = false; if (document.body.dataset.view === 'ar') startAR(); }
+  });
+
+  // ---------- corner minimap (rotates so the way you face is always up) ----------
+  const mini = L.map('miniMap', { zoomControl: false, attributionControl: false, dragging: false, touchZoom: false, scrollWheelZoom: false,
+    doubleClickZoom: false, boxZoom: false, keyboard: false, zoomSnap: 0, fadeAnimation: false }).setView([CFG.CAMPUS.lat, CFG.CAMPUS.lng], 17.6);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxNativeZoom: 19, maxZoom: 21, crossOrigin: true }).addTo(mini);
+  const miniBlips = L.layerGroup().addTo(mini);
+  function renderMini() {
+    miniBlips.clearLayers();
+    const g = S.guide;
+    if (g && S.pos) L.polyline([[S.pos.lat, S.pos.lng], [g.lat, g.lng]], { color: '#c05cff', weight: 5, opacity: 0.9, interactive: false }).addTo(miniBlips);
+    for (const b of S.buildings) {
+      const target = !!g && g.lat === b.lat && g.lng === b.lng;
+      L.circleMarker([b.lat, b.lng], { radius: target ? 8 : 5.500, color: '#111', weight: 2, fillColor: target ? '#c05cff' : '#f2c744', fillOpacity: 1, interactive: false }).addTo(miniBlips);
+    }
+    if (S.pos) mini.setView([S.pos.lat, S.pos.lng], mini.getZoom(), { animate: false });
+  }
+  function drawMini() {
+    const hd = AR.heading || 0, r = (hd * Math.PI) / 180;
+    $('miniRot').style.transform = `rotate(${(-hd).toFixed(1)}deg)`;
+    // keep the N badge on the edge of the minimap, in the direction of north
+    const sx = -Math.sin(r), sy = -Math.cos(r), t = Math.min(79 / Math.abs(sx || 1e-6), 56 / Math.abs(sy || 1e-6));
+    $('miniN').style.transform = `translate(${(79 + sx * t).toFixed(1)}px, ${(56 + sy * t).toFixed(1)}px)`;
+    const gps = S.pos ? Math.max(12, Math.min(100, 110 - S.pos.acc * 2)) : 0;
+    $('barGps').firstChild.style.width = gps + '%';
+    $('barNet').classList.toggle('off', !navigator.onLine);
+    $('barNet').firstChild.style.width = navigator.onLine ? '100%' : '45%';
+  }
+
   // no compass (laptops, some tablets): drag to look around instead
   let dragX = null;
   arLayer.addEventListener('pointerdown', (e) => { if (AR.manual && e.target === arLayer) dragX = e.clientX; });
@@ -488,7 +525,7 @@
 
     if (S.pos && AR.heading != null) {
       // tilting the phone up pushes the horizon (and the labels standing on it) down the screen
-      const horizon = Math.min(ht - 170, Math.max(190, ht / 2 + 8 + (AR.pitch - 90) * (ht / 70)));
+      const horizon = Math.min(ht - 190, Math.max(230, ht / 2 + 8 + (AR.pitch - 90) * (ht / 70)));
       const placed = [];
       const items = S.buildings
         .map((b, i) => ({ b, i, d: distance(S.pos, b), off: ((bearing(S.pos, b) - AR.heading + 540) % 360) - 180 }))
@@ -502,7 +539,7 @@
         if (placed.length >= 8 && !target) continue;
         const x = w / 2 + (off / (AR_FOV / 2)) * (w / 2);
         let y = horizon;
-        while (y > 170 && placed.some((p) => Math.abs(p.x - x) < 150 && Math.abs(p.y - y) < 96)) y -= 100;
+        while (y > 210 && placed.some((p) => Math.abs(p.x - x) < 150 && Math.abs(p.y - y) < 96)) y -= 100;
         placed.push({ x, y });
         let el = AR.els.get(b.id);
         if (!el) {
@@ -534,6 +571,9 @@
     else if (lock) { const rooms = S.rooms.filter((r) => r.building_id === lock.b.id).length; msg = `Locked: ${lock.b.name} · ${fmtDist(lock.d)} · ${rooms} room${rooms === 1 ? '' : 's'} · tap it to open`; }
     else if (AR.manual) msg = 'No compass on this device. Drag left or right to look around.';
     else msg = `Scanning… point the camera around you · GPS ±${Math.round(S.pos.acc)} m`;
+    if (!lock && S.guide && S.pos && AR.heading != null) msg = `Target: ${S.guide.name} · ${fmtDist(distance(S.pos, S.guide))} · ${DIRS_SHORT[Math.round(bearing(S.pos, S.guide) / 45) % 8]}`;
+    $('arStop').hidden = !S.guide;
+    drawMini();
     const set = (id, text) => { if ($(id).textContent !== text) $(id).textContent = text; };
     set('arMsg', msg);
     set('arHeading', AR.heading == null ? 'HDG ---' : `${DIRS_SHORT[Math.round(AR.heading / 45) % 8]} ${String(Math.round(AR.heading) % 360).padStart(3, '0')}°`);
@@ -693,11 +733,12 @@
   function setView(v) {
     document.body.dataset.view = v;
     document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === v));
-    if (v === 'map') setTimeout(() => map.invalidateSize(), 50);
+    if (v === 'ar') startAR(); else stopAR();
+    if (v === 'map') setTimeout(() => { map.invalidateSize(); if (S.guide) renderGuide(true); }, 50);
   }
   document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => {
     const t = b.dataset.tab;
-    if (t === 'add') openForm('building'); else if (t === 'account') openAccount(); else if (t === 'ar') openAR(); else setView(t);
+    if (t === 'add') openForm('building'); else if (t === 'account') openAccount(); else setView(t);
   }));
   document.querySelectorAll('.chip').forEach((c) => c.addEventListener('click', () => {
     S.filter = c.dataset.filter;

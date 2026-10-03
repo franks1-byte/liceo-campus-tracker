@@ -70,14 +70,15 @@ button { cursor: pointer; }
 /* layout */
 main { position: relative; min-height: 0; }
 .view { position: absolute; inset: 0; display: none; }
-body[data-view="map"] #mapView, body[data-view="places"] #placesView { display: block; }
+body[data-view="ar"] #arView, body[data-view="map"] #mapView, body[data-view="places"] #placesView { display: block; }
 #placesView { overflow-y: auto; background: var(--paper); }
 #map { position: absolute; inset: 0; background: #e9e2d3; }
 @media (min-width: 900px) {
   main { display: grid; grid-template-columns: 400px 1fr; }
-  .view { position: relative; inset: auto; display: block !important; }
-  #placesView { order: -1; border-right: 1px solid var(--line); }
-  .tabs button[data-tab="map"], .tabs button[data-tab="places"] { display: none; }
+  #placesView { position: relative; inset: auto; display: block !important; grid-column: 1; grid-row: 1; border-right: 1px solid var(--line); }
+  #mapView, #arView { position: relative; inset: auto; grid-column: 2; grid-row: 1; }
+  body[data-view="places"] #arView { display: block; }
+  .tabs button[data-tab="places"] { display: none; }
 }
 
 /* map overlays */
@@ -206,19 +207,21 @@ label.f { display: grid; gap: 4px; font-size: .86rem; font-weight: 600; }
 .shutter { width: 72px; height: 72px; border-radius: 50%; border: 5px solid #fff; background: var(--gold); }
 
 /* AR camera view: HUD tracker look (green trace + copper, monospace) */
-.ar { --trace: #4ade80; --copper: #f0a35c; width: 100%; height: 100%; max-width: 100%; max-height: 100%; overflow: hidden; color: #e8ece9;
+.ar { --trace: #4ade80; --copper: #f0a35c; overflow: hidden; color: #e8ece9;
   font-family: ui-monospace, "Space Mono", "SFMono-Regular", Menlo, Consolas, monospace;
   background: linear-gradient(#0a0f0d 0%, #16302a 50%, #0f1613 50%, #0a0f0d 100%); }
 .ar video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .ar::after { content: ""; position: absolute; inset: 0; pointer-events: none; /* faint scan lines + vignette */
   background: repeating-linear-gradient(rgba(74, 222, 128, .05) 0 1px, transparent 1px 4px), radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, .55)); }
 #arLayer { position: absolute; inset: 0; overflow: hidden; touch-action: none; z-index: 1; }
-.ar-top, .ar-msg, .ar-arrow, .ar-reticle, .ar-frame { z-index: 2; }
+.ar-top, .ar-msg, .ar-arrow, .ar-reticle, .ar-frame, .radar { z-index: 100001; }
+.ar-start { z-index: 100002; }
 .ar-top { position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: center; gap: 8px;
-  padding: calc(12px + env(safe-area-inset-top)) 14px 24px; background: linear-gradient(rgba(0, 0, 0, .7), transparent); }
+  padding: 12px 14px 24px; background: linear-gradient(rgba(0, 0, 0, .7), transparent); }
+.ar-top .stop { border-color: var(--copper); color: var(--copper); }
 .ar-top .pill, .ar-top .btn { background: rgba(10, 15, 13, .7); border: 1px solid var(--trace); color: var(--trace); border-radius: 2px;
   font: 700 .8rem/1.2 inherit; font-family: inherit; text-transform: uppercase; letter-spacing: .08em; padding: 7px 10px; font-variant-numeric: tabular-nums; }
-.ar-frame { position: absolute; inset: calc(58px + env(safe-area-inset-top)) 10px calc(78px + env(safe-area-inset-bottom)); pointer-events: none;
+.ar-frame { position: absolute; inset: 54px 10px 12px; pointer-events: none;
   --l: 22px; --c: var(--trace); opacity: .8;
   background:
     linear-gradient(var(--c), var(--c)) top left / var(--l) 2px no-repeat, linear-gradient(var(--c), var(--c)) top left / 2px var(--l) no-repeat,
@@ -227,7 +230,7 @@ label.f { display: grid; gap: 4px; font-size: .86rem; font-weight: 600; }
     linear-gradient(var(--c), var(--c)) bottom right / var(--l) 2px no-repeat, linear-gradient(var(--c), var(--c)) bottom right / 2px var(--l) no-repeat; }
 .ar-reticle { position: absolute; left: 50%; top: 50%; width: 120px; height: 120px; margin: -60px 0 0 -60px; pointer-events: none; color: var(--trace); opacity: .75; }
 .ar-reticle.locked { color: var(--copper); opacity: 1; }
-.ar-msg { position: absolute; left: 12px; right: 12px; bottom: calc(16px + env(safe-area-inset-bottom)); margin: 0; text-align: center;
+.ar-msg { position: absolute; left: 22px; right: 22px; top: 62px; margin: 0; text-align: center;
   background: rgba(10, 15, 13, .8); border: 1px solid var(--trace); color: var(--trace); border-radius: 2px; padding: 10px 12px; font-size: .8rem;
   text-transform: uppercase; letter-spacing: .06em; }
 .ar-msg.locked { border-color: var(--copper); color: var(--copper); }
@@ -258,6 +261,29 @@ label.f { display: grid; gap: 4px; font-size: .86rem; font-weight: 600; }
   .ar-reticle.locked svg { animation-duration: 3s; }
   @keyframes spin { to { transform: rotate(360deg); } }
 }
+
+/* GTA-style minimap in the corner */
+.radar { position: absolute; left: 14px; bottom: 16px; width: 164px; display: grid; gap: 4px; }
+.mini { position: relative; display: block; width: 164px; height: 118px; padding: 0; overflow: hidden; background: #1b1f1d;
+  border: 3px solid rgba(0, 0, 0, .78); border-radius: 6px; box-shadow: 0 4px 18px rgba(0, 0, 0, .55); }
+.mini-rot { position: absolute; left: 50%; top: 50%; width: 220px; height: 220px; margin: -110px 0 0 -110px; will-change: transform; }
+#miniMap { position: absolute; inset: 0; background: #2a2f2c; pointer-events: none; }
+#miniMap .leaflet-tile-pane { filter: grayscale(1) invert(.92) contrast(.85) brightness(.95); }
+.mini-me { position: absolute; left: 50%; top: 50%; width: 0; height: 0; margin: -11px 0 0 -8px;
+  border-left: 8px solid transparent; border-right: 8px solid transparent; border-bottom: 20px solid #fff; filter: drop-shadow(0 0 2px #000) drop-shadow(0 0 1px #000); }
+.mini-n { position: absolute; left: 0; top: 0; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; background: #fff; color: #111;
+  font: 700 11px/18px system-ui, sans-serif; text-align: center; box-shadow: 0 0 0 2px rgba(0, 0, 0, .7); }
+.bars { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.bars span { height: 7px; background: rgba(0, 0, 0, .7); border-radius: 2px; overflow: hidden; }
+.bars i { display: block; height: 100%; width: 0; transition: width .4s; }
+.bar-g i { background: #5fb95f; } .bar-n i { background: #4a9fe0; } .bar-n.off i { background: #e8b030; }
+.radar small { font: 9px/1 system-ui, sans-serif; color: rgba(255, 255, 255, .75); text-shadow: 0 0 3px #000; }
+.ar-start { position: absolute; inset: 0; display: grid; align-content: center; justify-items: center; gap: 12px; padding: 24px; text-align: center;
+  background: rgba(10, 15, 13, .88); font-family: system-ui, sans-serif; }
+.ar-start img { border-radius: 16px; }
+.ar-start strong { font: 700 1.4rem Georgia, serif; }
+.ar-start span { max-width: 280px; color: #c9d3cd; }
+.ar-start .btn { background: var(--gold); border-color: var(--gold); color: #2a1505; padding: 13px 28px; }
 
 .toast {
   position: fixed; left: 50%; bottom: calc(var(--tabs-h) + 22px + env(safe-area-inset-bottom)); transform: translateX(-50%);
